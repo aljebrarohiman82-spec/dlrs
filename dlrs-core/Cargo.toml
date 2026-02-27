@@ -12,6 +12,10 @@ categories = ["cryptography", "science"]
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "dlrs"
+path = "src/bin/dlrs.rs"
+
 [dependencies]
 nalgebra = { version = "0.33", features = ["serde-serialize", "rand"] }
 rand = "0.8"
@@ -35,8 +39,9 @@ ark-serialize = "0.5"
 ark-std = "0.5"
 
 # Networking
-libp2p = { version = "0.54", features = ["gossipsub", "mdns", "noise", "tcp", "yamux", "tokio"] }
+libp2p = { version = "0.54", features = ["gossipsub", "mdns", "noise", "tcp", "yamux", "tokio", "macros"] }
 tokio = { version = "1", features = ["full"] }
+futures = "0.3"
 
 # WASM support
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -1,2 +1,4 @@
 /dlrs-core/target/
 target/
+dlrs-store.json
+dlrs-export-*.json

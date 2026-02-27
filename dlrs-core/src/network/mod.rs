@@ -5,6 +5,8 @@
 
 mod protocol;
 mod node;
+pub mod swarm;
 
-pub use protocol::{DlrsMessage, MessageType};
-pub use node::DlrsNode;
+pub use protocol::{DlrsMessage, MessageType, DLRS_TOPIC};
+pub use node::{DlrsNode, NodeConfig};
+pub use swarm::{run_swarm, SwarmCommand, SwarmConfig, SwarmEvent2};

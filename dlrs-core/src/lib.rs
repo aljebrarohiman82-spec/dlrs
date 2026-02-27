@@ -8,6 +8,7 @@ pub mod zk;
 pub mod network;
 pub mod storage;
 
-pub use seed::{DnaSeed, LowRankIdentity, MutationRules, ReplicationPolicy};
+pub use seed::{DnaSeed, LowRankIdentity, MutationRules, ReplicationPolicy, Lineage};
 pub use zk::{ZkCommitment, CapabilityProof};
+pub use network::{DlrsMessage, DlrsNode};
 pub use storage::SeedStore;

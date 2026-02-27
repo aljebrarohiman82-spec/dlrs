@@ -36,7 +36,7 @@ impl LowRankIdentity {
 
     /// Create LRIM from a full matrix via truncated SVD
     pub fn from_matrix(k: &DMatrix<f64>, target_rank: usize) -> Self {
-        let svd = k.svd(true, true);
+        let svd = k.clone().svd(true, true);
         let u_full = svd.u.expect("SVD must produce U");
         let v_full = svd.v_t.expect("SVD must produce Vt").transpose();
         let s_full = svd.singular_values;

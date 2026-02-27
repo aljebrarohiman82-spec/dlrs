@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DLRS â Distributed Low-Rank Space</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#050810;--card:#0c1220;--border:#1a2744;--text:#e8edf5;--dim:#6b7fa3;--blue:#3b82f6;--purple:#8b5cf6;--green:#10b981;--red:#ef4444;--cyan:#06b6d4;--gold:#f59e0b;--pink:#ec4899}
+body{background:var(--bg);color:var(--text);font-family:'SF Pro','Inter',system-ui,sans-serif;overflow-x:hidden}
+.hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;position:relative;padding:40px 20px}
+.hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 50% 30%,rgba(59,130,246,.08) 0%,transparent 60%),radial-gradient(ellipse at 80% 70%,rgba(139,92,246,.06) 0%,transparent 50%);pointer-events:none}
+.hero h1{font-size:clamp(2.5rem,6vw,5rem);font-weight:800;line-height:1.1;margin-bottom:16px;background:linear-gradient(135deg,#fff 0%,#3b82f6 50%,#8b5cf6 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero .sub{font-size:clamp(1rem,2.5vw,1.5rem);color:var(--dim);max-width:700px;line-height:1.6;margin-bottom:40px}
+.hero .formula{font-family:'SF Mono',monospace;font-size:clamp(1.2rem,3vw,2rem);color:var(--cyan);padding:20px 40px;border:1px solid var(--border);border-radius:12px;background:rgba(6,182,212,.05);margin-bottom:40px;letter-spacing:2px}
+.scroll-hint{color:var(--dim);font-size:14px;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+
+section{padding:80px 32px;max-width:1200px;margin:0 auto}
+.section-label{font-size:12px;text-transform:uppercase;letter-spacing:3px;color:var(--blue);margin-bottom:8px}
+.section-title{font-size:clamp(1.8rem,4vw,2.8rem);font-weight:700;margin-bottom:24px}
+.section-desc{font-size:18px;color:var(--dim);line-height:1.7;max-width:800px;margin-bottom:48px}
+
+/* Matrix animation */
+.matrix-viz{width:100%;height:400px;position:relative;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--card);margin-bottom:48px}
+.matrix-viz canvas{width:100%;height:100%}
+
+/* Three pillars */
+.pillars{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:24px;margin-bottom:64px}
+.pillar{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px;transition:all .3s}
+.pillar:hover{border-color:var(--blue);transform:translateY(-4px)}
+.pillar .icon{font-size:48px;margin-bottom:16px}
+.pillar h3{font-size:20px;font-weight:700;margin-bottom:12px}
+.pillar p{color:var(--dim);line-height:1.6;font-size:15px}
+.pillar .tag{display:inline-block;font-size:11px;padding:4px 12px;border-radius:20px;margin-top:16px;font-weight:600}
+.pillar:nth-child(1) .tag{background:rgba(59,130,246,.15);color:var(--blue)}
+.pillar:nth-child(2) .tag{background:rgba(139,92,246,.15);color:var(--purple)}
+.pillar:nth-child(3) .tag{background:rgba(16,185,129,.15);color:var(--green)}
+
+/* DNA visualization */
+.dna-container{display:flex;gap:32px;align-items:stretch;flex-wrap:wrap;margin-bottom:64px}
+.dna-card{flex:1;min-width:280px;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px}
+.dna-card h4{font-size:14px;color:var(--cyan);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px}
+.dna-card .code{font-family:'SF Mono',monospace;font-size:13px;line-height:1.8;color:var(--text);background:rgba(0,0,0,.3);padding:16px;border-radius:8px;overflow-x:auto}
+.dna-card .code .kw{color:var(--purple)}
+.dna-card .code .ty{color:var(--cyan)}
+.dna-card .code .cm{color:var(--dim)}
+.dna-card .code .st{color:var(--green)}
+
+/* Interactive seed demo */
+.demo{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:32px;margin-bottom:64px}
+.demo h3{font-size:20px;margin-bottom:16px}
+.demo-controls{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:24px}
+.demo-btn{padding:10px 20px;border:1px solid var(--border);border-radius:8px;background:transparent;color:var(--text);cursor:pointer;font-size:14px;transition:all .2s}
+.demo-btn:hover{border-color:var(--blue);background:rgba(59,130,246,.1)}
+.demo-btn.active{background:var(--blue);border-color:var(--blue);color:#fff}
+.demo-output{font-family:'SF Mono',monospace;font-size:13px;line-height:1.6;padding:20px;background:rgba(0,0,0,.3);border-radius:8px;min-height:200px;white-space:pre-wrap;color:var(--green)}
+
+/* Unification table */
+.unify-table{width:100%;border-collapse:collapse;margin-bottom:64px}
+.unify-table th{text-align:left;padding:16px;font-size:14px;color:var(--dim);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:1px}
+.unify-table td{padding:16px;border-bottom:1px solid rgba(26,39,68,.5);font-size:15px}
+.unify-table td:first-child{font-weight:600;color:var(--gold)}
+.unify-table tr:hover td{background:rgba(59,130,246,.03)}
+
+/* Footer */
+.footer{text-align:center;padding:64px 32px;border-top:1px solid var(--border)}
+.footer .quote{font-size:24px;font-style:italic;color:var(--dim);margin-bottom:8px}
+.footer .author{color:var(--blue)}
+.footer .links{margin-top:24px;display:flex;gap:16px;justify-content:center}
+.footer .links a{color:var(--dim);text-decoration:none;padding:8px 16px;border:1px solid var(--border);border-radius:8px;transition:all .2s}
+.footer .links a:hover{color:var(--text);border-color:var(--blue)}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <h1>Distributed Low-Rank Space</h1>
+  <div class="sub">Zero-Knowledge Shared Private Matrices<br>& The Programmable DNA of Civilization</div>
+  <div class="formula">K â U Â· Î£ Â· Váµ &nbsp;where&nbsp; rank(Î£) = r âª min(m, n)</div>
+  <div class="sub" style="font-size:16px">All knowledge is a low-rank matrix. DLRS lets you prove you have it, share its utility, and evolve it â without ever revealing it.</div>
+  <div class="scroll-hint">â scroll to explore â</div>
+</div>
+
+<!-- INSIGHT -->
+<section>
+  <div class="section-label">Core Insight / æ ¸å¿æ´å¯</div>
+  <div class="section-title">Everything compresses. Everything.</div>
+  <div class="section-desc">A doctor's decades of diagnostic experience. An AI model's billions of parameters. A civilization's accumulated knowledge. All are low-rank projections of high-dimensional reality. The true dimensionality of knowledge is far lower than it appears.</div>
+
+  <div class="pillars">
+    <div class="pillar">
+      <div class="icon">ð</div>
+      <h3>Low-Rank Factorization</h3>
+      <p>Any knowledge matrix K can be factorized into UÂ·Î£Â·Váµ with rank r that is shockingly small. A 1000Ã500 matrix compressed to rank 16 achieves 20x compression with minimal loss.</p>
+      <span class="tag">Mathematics</span>
+    </div>
+    <div class="pillar">
+      <div class="icon">ð</div>
+      <h3>Zero-Knowledge Proofs</h3>
+      <p>Prove your knowledge has certain properties â it can solve problems, achieve accuracy, contain expertise â without ever revealing U, Î£, or V. Share utility, keep secrets.</p>
+      <span class="tag">Cryptography</span>
+    </div>
+    <div class="pillar">
+      <div class="icon">ð§¬</div>
+      <h3>Programmable DNA</h3>
+      <p>Seeds that are simultaneously data, program, and replication mechanism. They store knowledge, express it as computation, copy themselves, and evolve through selection.</p>
+      <span class="tag">Biology</span>
+    </div>
+  </div>
+</section>
+
+<!-- DNA SEED -->
+<section>
+  <div class="section-label">Architecture / æ¶æ</div>
+  <div class="section-title">The DNA Seed</div>
+  <div class="section-desc">The minimal self-contained unit of DLRS. A seed is simultaneously a mathematical object, a cryptographic object, a biological object, an economic object, and a civilizational object.</div>
+
+  <div class="dna-container">
+    <div class="dna-card">
+      <h4>ð¢ Knowledge (ç¥è¯)</h4>
+      <div class="code"><span class="cm">// The compressed essence</span>
+<span class="kw">u</span>: <span class="ty">Matrix</span>     <span class="cm">// capability basis</span>
+<span class="kw">sigma</span>: <span class="ty">Diagonal</span> <span class="cm">// capability strengths</span>
+<span class="kw">v</span>: <span class="ty">Matrix</span>     <span class="cm">// domain projections</span></div>
+    </div>
+    <div class="dna-card">
+      <h4>â¡ Program (ç¨åº)</h4>
+      <div class="code"><span class="cm">// How to unfold the seed</span>
+<span class="kw">express</span>: [<span class="ty">Instruction</span>]
+<span class="kw">mutate</span>:  <span class="ty">MutationRules</span>
+<span class="kw">replicate</span>: <span class="ty">ReplicationPolicy</span></div>
+    </div>
+    <div class="dna-card">
+      <h4>ð Proof (è¯æ)</h4>
+      <div class="code"><span class="cm">// Verify without revealing</span>
+<span class="kw">commitment</span>: <span class="ty">ZkCommitment</span>
+<span class="kw">lineage</span>: <span class="ty">MerkleTree</span>
+<span class="kw">fitness</span>: <span class="ty">f64</span> <span class="cm">// [0, 1]</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- INTERACTIVE DEMO -->
+<section>
+  <div class="section-label">Interactive / äº¤äºæ¼ç¤º</div>
+  <div class="section-title">Try It: Create â Prove â Evolve â Replicate</div>
+
+  <div class="demo">
+    <h3>DNA Seed Simulator</h3>
+    <div class="demo-controls">
+      <button class="demo-btn active" onclick="demoCreate()">ð± Create Seed</button>
+      <button class="demo-btn" onclick="demoProve()">ð ZK Prove</button>
+      <button class="demo-btn" onclick="demoEvolve()">ð§¬ Evolve</button>
+      <button class="demo-btn" onclick="demoReplicate()">ð Replicate</button>
+      <button class="demo-btn" onclick="demoMerge()">â Merge</button>
+    </div>
+    <div class="demo-output" id="demo-out">Click a button to simulate a DLRS operation...</div>
+  </div>
+</section>
+
+<!-- UNIFICATION -->
+<section>
+  <div class="section-label">Philosophy / å²å­¦</div>
+  <div class="section-title">Five Domains, One Primitive</div>
+  <div class="section-desc">DLRS is the recognition that compression, privacy, evolution, value, and memory are all aspects of the same thing.</div>
+
+  <table class="unify-table">
+    <tr><th>Domain é¢å</th><th>The seed is... ç§å­æ¯...</th><th>Mechanism æºå¶</th></tr>
+    <tr><td>Mathematics æ°å­¦</td><td>A low-rank matrix factorization</td><td>SVD / NMF / LoRA</td></tr>
+    <tr><td>Cryptography å¯ç å­¦</td><td>A ZK-committed verifiable object</td><td>Groth16 / PLONK / STARKs</td></tr>
+    <tr><td>Biology çç©å­¦</td><td>Self-replicating, evolvable DNA</td><td>Mutation + Selection + Lineage</td></tr>
+    <tr><td>Economics ç»æµå­¦</td><td>A fitness-valued asset</td><td>Market pricing via capability proofs</td></tr>
+    <tr><td>Civilization ææ</td><td>Humanity's compressed memory</td><td>Distributed gossip + Merkle ancestry</td></tr>
+  </table>
+</section>
+
+<!-- FOOTER -->
+<div class="footer">
+  <div class="quote">"The rank of truth is always lower than it appears."</div>
+  <div class="quote" style="font-size:18px">"çççç§©æ»æ¯ä½äºå®è¡¨é¢çèµ·æ¥çæ ·å­ã"</div>
+  <div class="author" style="margin-top:12px">â xkk, 2026</div>
+  <div class="links">
+    <a href="https://github.com/xkk/dlrs">GitHub</a>
+    <a href="./paper.md">Paper è®ºæ</a>
+    <a href="https://x.com/xkk">Follow @xkk</a>
+  </div>
+</div>
+
+<script>
+// Interactive demo simulation
+let seedState = null;
+const out = document.getElementById('demo-out');
+
+function ts() { return new Date().toISOString().slice(11,23); }
+
+function demoCreate() {
+  setActive(0);
+  seedState = {
+    name: 'my-expertise',
+    rank: 8,
+    m: 100, n: 50,
+    fitness: 0.500,
+    epoch: 0,
+    domains: ['ai', 'crypto'],
+    sigma_norm: (Math.random() * 10 + 5).toFixed(3),
+    hash: Array.from({length:16}, ()=>Math.random().toString(16)[2]).join(''),
+    children: 0
+  };
+  out.textContent =
+`[${ts()}] Creating DNA Seed from 100Ã50 knowledge matrix...
+
+  Factorizing: K â U Â· Î£ Â· Váµ  (truncated SVD, target rank = 8)
+  â U: 100Ã8  Î£: [${Array.from({length:8},()=>(Math.random()*5+1).toFixed(2)).join(', ')}]  V: 50Ã8
+
+  Compression: ${(100*50 / (100*8 + 8 + 50*8)).toFixed(1)}x  (${100*50} params â ${100*8+8+50*8} params)
+
+  ZK Commitment:
+    matrix_hash = ${seedState.hash}...
+    âÎ£â = ${seedState.sigma_norm}
+    rank = 8 (public)
+    dims = 100Ã50 (public)
+
+  Lineage: Genesis (epoch 0)
+
+  âââââââââââââââââââââââââââââââââââââââââââ
+  â DnaSeed 'my-expertise'                  â
+  â rank=8 | 100Ã50 | fitness=0.500         â
+  â domains: [ai, crypto]                   â
+  â compression: ${(100*50 / (100*8 + 8 + 50*8)).toFixed(1)}x | epoch: 0                   â
+  âââââââââââââââââââââââââââââââââââââââââââ
+
+ð± Seed created. Knowledge compressed. ZK committed.`;
+}
+
+function demoProve() {
+  if (!seedState) { out.textContent = 'â ï¸ Create a seed first!'; return; }
+  setActive(1);
+  const cap = (Math.random() * 0.4 + 0.6).toFixed(3);
+  out.textContent =
+`[${ts()}] Generating ZK Capability Proof...
+
+  Challenge from verifier: "Prove capability in domain 'machine-learning'"
+  Threshold: â¥ 0.500
+
+  Computing: projection = Váµ Â· domain_vector
+  Weighting: capability = Î£ Â· projection = ${cap}
+  ${parseFloat(cap) >= 0.5 ? 'â' : 'â'} Capability ${cap} ${parseFloat(cap) >= 0.5 ? 'â¥' : '<'} 0.500
+
+  Generating Groth16 proof...
+  â Proof generated (${(Math.random()*50+10).toFixed(0)}ms)
+
+  âââââââââââââââââââââââââââââââââââââââââââ
+  â ZK CAPABILITY PROOF                     â
+  â                                         â
+  â Claim: "Entity has capability â¥ 0.500   â
+  â         in domain 'machine-learning'"   â
+  â                                         â
+  â Revealed:  rank=8, dims=100Ã50, âÎ£â    â
+  â Hidden:    U, Î£, V (the actual knowledge)â
+  â                                         â
+  â Verifier can confirm: â YES             â
+  â Verifier learns:      NOTHING about HOW â
+  âââââââââââââââââââââââââââââââââââââââââââ
+
+ð Proved capability without revealing knowledge.`;
+}
+
+function demoEvolve() {
+  if (!seedState) { out.textContent = 'â ï¸ Create a seed first!'; return; }
+  setActive(2);
+  const oldFit = seedState.fitness;
+  seedState.epoch += 1;
+  seedState.fitness = Math.min(1, seedState.fitness + (Math.random() * 0.03 - 0.005));
+  const err = (Math.random() * 2 + 0.5).toFixed(4);
+  out.textContent =
+`[${ts()}] Evolving seed (epoch ${seedState.epoch})...
+
+  Receiving feedback from network...
+  Computing gradient: ÎU â error Â· V Â· Î£â»Â¹
+                      ÎV â erroráµ Â· U Â· Î£â»Â¹
+
+  Updating factors:
+    U' = U + 0.01 Â· ÎU  (capability basis shift)
+    V' = V + 0.01 Â· ÎV  (domain projection shift)
+    Î£ unchanged (strengths stable)
+
+  Reconstruction error: ${err}
+  Fitness: ${oldFit.toFixed(3)} â ${seedState.fitness.toFixed(3)} ${seedState.fitness > oldFit ? 'ð' : 'ð'}
+
+  Lineage updated: Mutation event recorded
+  Commitment re-generated: ${Array.from({length:16},()=>Math.random().toString(16)[2]).join('')}...
+
+  âââââââââââââââââââââââââââââââââââââââââââ
+  â EVOLUTION COMPLETE                      â
+  â epoch: ${seedState.epoch}  fitness: ${seedState.fitness.toFixed(3)}               â
+  â The seed adapts. The knowledge deepens. â
+  âââââââââââââââââââââââââââââââââââââââââââ
+
+ð§¬ Evolved. The matrix learns from the world.`;
+}
+
+function demoReplicate() {
+  if (!seedState) { out.textContent = 'â ï¸ Create a seed first!'; return; }
+  setActive(3);
+  if (seedState.fitness < 0.7 || seedState.epoch < 5) {
+    out.textContent =
+`[${ts()}] Attempting replication...
+
+  Checking replication conditions:
+    fitness ${seedState.fitness.toFixed(3)} ${seedState.fitness >= 0.7 ? 'â¥' : '<'} 0.700  ${seedState.fitness >= 0.7 ? 'â' : 'â'}
+    epoch ${seedState.epoch} ${seedState.epoch >= 5 ? 'â¥' : '<'} 5        ${seedState.epoch >= 5 ? 'â' : 'â'}
+    children ${seedState.children} < 3       â
+
+  â ï¸ Conditions not met. Seed needs more evolution.
+  ${seedState.fitness < 0.7 ? 'â Keep evolving to raise fitness above 0.700' : 'â Need at least 5 epochs of evolution'}
+
+  (Only fit, mature seeds deserve to replicate)`;
+    return;
+  }
+  seedState.children += 1;
+  out.textContent =
+`[${ts()}] Replicating seed...
+
+  Replication conditions met:
+    fitness ${seedState.fitness.toFixed(3)} â¥ 0.700  â
+    epoch ${seedState.epoch} â¥ 5        â
+    children ${seedState.children-1} < 3       â
+
+  Creating child seed:
+    name: '${seedState.name}_gen${seedState.epoch+1}'
+    inherits: full LRIM (U, Î£, V)
+    child fitness: ${(seedState.fitness * 0.9).toFixed(3)} (90% of parent)
+    child epoch: 0 (fresh start)
+    lineage: parent â child (Merkle linked)
+
+  âââââââââââââââââââââââââââââââââââââââââââ
+  â CHILD SPAWNED                           â
+  â '${seedState.name}_gen${seedState.epoch+1}'                   â
+  â fitness: ${(seedState.fitness * 0.9).toFixed(3)} | rank: 8 | epoch: 0        â
+  â The seed spreads. Knowledge propagates. â
+  âââââââââââââââââââââââââââââââââââââââââââ
+
+ð Replicated. The DNA of knowledge lives on.`;
+}
+
+function demoMerge() {
+  if (!seedState) { out.textContent = 'â ï¸ Create a seed first!'; return; }
+  setActive(4);
+  const otherRank = Math.floor(Math.random()*4)+4;
+  const mergedRank = seedState.rank + otherRank;
+  out.textContent =
+`[${ts()}] Merging with another seed...
+
+  Seed A: '${seedState.name}' (rank ${seedState.rank}, domains: [ai, crypto])
+  Seed B: 'biotech-insight' (rank ${otherRank}, domains: [biotech, genomics])
+
+  Merge process:
+    1. Reconstruct: K_a = U_a Â· Î£_a Â· V_aáµ
+    2. Reconstruct: K_b = U_b Â· Î£_b Â· V_báµ
+    3. Combine: K_merged = K_a + K_b
+    4. Re-factorize: K_merged â U_m Â· Î£_m Â· V_máµ (rank â¤ ${mergedRank})
+
+  Result:
+    name: '${seedState.name}âbiotech-insight'
+    rank: ${Math.min(mergedRank, seedState.m)} (combined complexity)
+    domains: [ai, crypto, biotech, genomics]
+    fitness: ${((seedState.fitness + 0.6)/2).toFixed(3)} (averaged)
+    lineage: Merge event (both parents in Merkle tree)
+
+  âââââââââââââââââââââââââââââââââââââââââââ
+  â SEEDS MERGED                            â
+  â Two knowledge domains unified.          â
+  â The composite knows what neither alone   â
+  â could know. Rank grows. Reach expands.  â
+  âââââââââââââââââââââââââââââââââââââââââââ
+
+â Merged. Greater than the sum of parts.`;
+}
+
+function setActive(idx) {
+  document.querySelectorAll('.demo-btn').forEach((b,i) => b.classList.toggle('active', i===idx));
+}
+
+// Auto-create on load
+window.addEventListener('load', () => setTimeout(demoCreate, 500));
+</script>
+</body>
+</html>

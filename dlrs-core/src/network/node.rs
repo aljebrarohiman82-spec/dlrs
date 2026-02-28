@@ -48,10 +48,11 @@ pub struct DlrsNode {
 }
 
 /// A pending outbound request
+#[allow(dead_code)]
 struct PendingRequest {
-    pub request_id: String,
-    pub domain: String,
-    pub responses: Vec<(String, f64)>, // (seed_id, score)
+    request_id: String,
+    domain: String,
+    responses: Vec<(String, f64)>, // (seed_id, score)
 }
 
 impl DlrsNode {

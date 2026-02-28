@@ -331,6 +331,19 @@ impl LoraManager {
         Ok(manager)
     }
 
+    /// Add an existing adapter to the manager
+    pub fn add_adapter(&mut self, adapter: LoraAdapter) -> String {
+        let id = adapter.id().to_string();
+        info!("Added adapter: {}", adapter.summary());
+        self.adapters.insert(id.clone(), adapter);
+        id
+    }
+
+    /// Serialize the manager to JSON
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
     /// Number of adapters
     pub fn count(&self) -> usize {
         self.adapters.len()

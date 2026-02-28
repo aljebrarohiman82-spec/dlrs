@@ -1,6 +1,11 @@
 //! Storage module — seed persistence and retrieval
 //!
-//! Provides in-memory and file-based storage for DNA seeds.
+//! Provides in-memory and file-based storage for DNA seeds,
+//! plus versioned backup and rollback.
+
+pub mod backup;
+
+pub use backup::{BackupManager, BackupManifest, SnapshotMeta};
 
 use crate::seed::DnaSeed;
 use serde::{Deserialize, Serialize};

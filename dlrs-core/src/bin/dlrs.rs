@@ -1,4 +1,4 @@
-//! DLRS CLI — LoRA Multi-Function Manager with Auto ZK Sharing
+//! DLRS CLI — LoRA Multi-Function Manager with Auto ZK Sharing + TEE Security
 //!
 //! Commands:
 //!   dlrs create     — create a new LoRA adapter
@@ -10,8 +10,9 @@
 //!   dlrs train      — train a LoRA adapter on a dataset
 //!   dlrs auto-train — AI-assisted automatic training
 //!   dlrs backup     — create/list/restore backup snapshots
+//!   dlrs tee        — TEE enclave management and secure operations
 //!   dlrs serve      — start P2P node with auto ZK sharing
-//!   dlrs demo       — run a full demo (train, evolve, backup, share)
+//!   dlrs demo       — run a full demo (train, evolve, backup, share, TEE)
 
 use dlrs_core::lora::{
     AdapterFormat, AutoShareDaemon, DaemonConfig, LoraConfig, LoraManager,
@@ -19,6 +20,11 @@ use dlrs_core::lora::{
     SharingRegistry,
 };
 use dlrs_core::storage::backup::BackupManager;
+use dlrs_core::tee::{
+    TeeEnclave, TeeBackend, SealedStorage,
+    AttestationPolicy, SecureChannel,
+    generate_quote, verify_quote,
+};
 use dlrs_core::network::{run_swarm, SwarmConfig};
 use nalgebra::DMatrix;
 use std::env;
@@ -27,6 +33,7 @@ use tokio::sync::Mutex;
 
 const STORE_FILE: &str = "dlrs-store.json";
 const BACKUP_DIR: &str = "dlrs-backups";
+const SEALED_DIR: &str = "dlrs-sealed";
 
 fn print_usage() {
     println!(
@@ -48,6 +55,7 @@ Commands:
   train      <id> <dataset> [epochs] [lr]                  Train adapter on dataset
   auto-train <name> <module> <dataset> [domains...]        AI-assisted automatic training
   backup     [create|list|restore <ver>|verify]            Backup management
+  tee        [init|status|seal <id>|attest|channel]        TEE enclave operations
   serve      [port]                                        Start P2P node + auto ZK sharing
   demo                                                     Run full interactive demo
 
@@ -57,6 +65,8 @@ Examples:
   dlrs auto-train smart-lora attn.q dataset.json nlp reasoning
   dlrs backup create
   dlrs backup restore 3
+  dlrs tee init sgx
+  dlrs tee seal <adapter-id>
   dlrs serve 9000
   dlrs demo
 "#
@@ -85,6 +95,7 @@ async fn main() {
         "train" => cmd_train(&args[2..]).await,
         "auto-train" => cmd_auto_train(&args[2..]).await,
         "backup" => cmd_backup(&args[2..]).await,
+        "tee" => cmd_tee(&args[2..]).await,
         "serve" => cmd_serve(&args[2..]).await,
         "demo" => cmd_demo().await,
         "help" | "--help" | "-h" => print_usage(),
@@ -475,6 +486,159 @@ async fn cmd_backup(args: &[String]) {
     }
 }
 
+async fn cmd_tee(args: &[String]) {
+    let subcmd = args.first().map(|s| s.as_str()).unwrap_or("status");
+
+    match subcmd {
+        "init" => {
+            let backend = match args.get(1).map(|s| s.as_str()) {
+                Some("sgx") => TeeBackend::IntelSgx,
+                Some("trustzone") => TeeBackend::ArmTrustZone,
+                _ => TeeBackend::Simulated,
+            };
+
+            println!("\n  Initializing TEE enclave ({})...", backend.name());
+            match TeeEnclave::new(backend) {
+                Ok(enclave) => {
+                    let status = enclave.status();
+                    println!("  Enclave ID:      {}", &status.enclave_id[..8]);
+                    println!("  Backend:         {}", backend.name());
+                    println!("  Security Level:  {:?}", status.security_level);
+                    println!("  Hardware TEE:    {}", backend.is_hardware());
+                    println!("  MRENCLAVE:       {}...", &enclave.get_measurement().mrenclave[..16]);
+                    println!("  MRSIGNER:        {}...", &enclave.get_measurement().mrsigner[..16]);
+                }
+                Err(e) => eprintln!("  Failed to init TEE: {}", e),
+            }
+        }
+        "status" => {
+            let enclave = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+            let status = enclave.status();
+            let sealed = SealedStorage::new(SEALED_DIR);
+
+            println!("\n  TEE Status");
+            println!("  {}", "=".repeat(40));
+            println!("  Enclave ID:      {}", &status.enclave_id[..8]);
+            println!("  Backend:         {:?}", status.backend);
+            println!("  Security Level:  {:?}", status.security_level);
+            println!("  Healthy:         {}", status.is_healthy);
+            println!("  Sealed Adapters: {}", sealed.count());
+            println!("  {}", sealed.summary());
+        }
+        "seal" => {
+            let prefix = match args.get(1) {
+                Some(p) => p,
+                None => {
+                    eprintln!("Usage: dlrs tee seal <adapter-id-prefix>");
+                    return;
+                }
+            };
+
+            let mgr = load_manager();
+            let matching: Vec<(String, String)> = mgr
+                .list()
+                .into_iter()
+                .filter(|(id, _)| id.starts_with(prefix))
+                .collect();
+
+            if matching.is_empty() {
+                eprintln!("  No adapter matching '{}'", prefix);
+                return;
+            }
+
+            let mut enclave = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+            let mut sealed = SealedStorage::new(SEALED_DIR);
+
+            for (id, _name) in &matching {
+                let adapter = mgr.get(id).unwrap();
+                let u = adapter.seed.lrim.u.as_slice().to_vec();
+                let s = adapter.seed.lrim.sigma.as_slice().to_vec();
+                let v = adapter.seed.lrim.v.as_slice().to_vec();
+
+                match sealed.seal_adapter(
+                    &mut enclave,
+                    id,
+                    &adapter.config.name,
+                    adapter.config.domains.clone(),
+                    adapter.config.rank,
+                    adapter.config.original_dims,
+                    &u,
+                    &s,
+                    &v,
+                ) {
+                    Ok(()) => println!(
+                        "  Sealed [{}] '{}' into TEE ({:?})",
+                        &id[..8],
+                        adapter.config.name,
+                        enclave.security_level()
+                    ),
+                    Err(e) => eprintln!("  Failed to seal [{}]: {}", &id[..8], e),
+                }
+            }
+        }
+        "attest" => {
+            println!("\n  Running self-attestation...");
+            let enclave = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+            let quote = generate_quote(&enclave, "self-test-nonce");
+            let policy = AttestationPolicy::default();
+            let verdict = verify_quote(&quote, &policy);
+
+            println!("  Backend:         {}", enclave.backend.name());
+            println!("  MRENCLAVE:       {}...", &quote.measurement.mrenclave[..16]);
+            println!("  Security Level:  {:?}", quote.security_level);
+            println!("  Signature:       {}...", &quote.signature[..16]);
+            println!("  Verdict:         {:?}", verdict);
+        }
+        "channel" => {
+            println!("\n  TEE Secure Channel Demo...");
+            println!("  {}", "-".repeat(50));
+
+            let enclave_a = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+            let enclave_b = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+
+            println!("  Enclave A: {}", &enclave_a.id[..8]);
+            println!("  Enclave B: {}", &enclave_b.id[..8]);
+
+            let policy = AttestationPolicy::default();
+            let mut channel_a = SecureChannel::new(&enclave_a.id, policy.clone());
+            let mut channel_b = SecureChannel::new(&enclave_b.id, policy);
+
+            // Handshake
+            let init = channel_a.initiate_handshake(&enclave_a);
+            println!("  Step 1: A initiates handshake");
+
+            let response = channel_b.respond_to_handshake(&enclave_b, &init);
+            println!(
+                "  Step 2: B responds (accepted={})",
+                response.accepted
+            );
+
+            match channel_a.complete_handshake(&response, &init.dh_public) {
+                Ok(()) => {
+                    println!("  Step 3: A completes handshake");
+                    println!("  Channel established!");
+                    println!("  {}", channel_a.summary());
+
+                    // Send a test message
+                    let msg = channel_a
+                        .encrypt_message(b"Hello from enclave A!")
+                        .unwrap();
+                    let decrypted = channel_b.decrypt_message(&msg).unwrap();
+                    println!(
+                        "  Test message: '{}' (encrypted + decrypted OK)",
+                        String::from_utf8_lossy(&decrypted)
+                    );
+                }
+                Err(e) => eprintln!("  Handshake failed: {}", e),
+            }
+        }
+        other => {
+            eprintln!("Unknown tee subcommand: {}", other);
+            eprintln!("Usage: dlrs tee [init [sgx|trustzone|sim]|status|seal <id>|attest|channel]");
+        }
+    }
+}
+
 async fn cmd_serve(args: &[String]) {
     let port: u16 = args.first().and_then(|s| s.parse().ok()).unwrap_or(0);
 
@@ -743,8 +907,82 @@ async fn cmd_demo() {
         );
     }
 
-    // Step 10: Stats
-    println!("\nStep 10: Final statistics...");
+    // Step 10: TEE Hardware Security
+    println!("\nStep 10: TEE enclave operations...");
+    println!("{}", "-".repeat(60));
+
+    let mut enclave = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+    println!(
+        "  Enclave: {} | backend={} | security={:?}",
+        &enclave.id[..8],
+        enclave.backend.name(),
+        enclave.security_level()
+    );
+
+    // Seal adapter factors into enclave
+    let mut sealed_storage = SealedStorage::new(SEALED_DIR);
+    let adapter = mgr.get(&attn_q_id).unwrap();
+    let u = adapter.seed.lrim.u.as_slice().to_vec();
+    let s = adapter.seed.lrim.sigma.as_slice().to_vec();
+    let v = adapter.seed.lrim.v.as_slice().to_vec();
+    sealed_storage
+        .seal_adapter(
+            &mut enclave,
+            &attn_q_id,
+            "attn-query",
+            vec!["nlp".into()],
+            adapter.config.rank,
+            adapter.config.original_dims,
+            &u,
+            &s,
+            &v,
+        )
+        .unwrap();
+    println!(
+        "  Sealed attn-query factors into TEE ({} items)",
+        enclave.status().sealed_items
+    );
+
+    // Compute proof inside enclave (factors never leave)
+    let proof_result = enclave
+        .enclave_compute_proof(&attn_q_id, "nlp", b"demo-challenge")
+        .unwrap();
+    println!(
+        "  Enclave proof: score={:.4} | hash={}...",
+        proof_result.capability_score,
+        &proof_result.proof_hash[..16]
+    );
+
+    // Remote attestation
+    let quote = generate_quote(&enclave, "demo-nonce");
+    let verdict = verify_quote(&quote, &AttestationPolicy::default());
+    println!(
+        "  Attestation: MRENCLAVE={}... | verdict={:?}",
+        &quote.measurement.mrenclave[..16],
+        verdict
+    );
+
+    // Secure channel between two enclaves
+    let enclave_b = TeeEnclave::new(TeeBackend::Simulated).unwrap();
+    let policy = AttestationPolicy::default();
+    let mut ch_a = SecureChannel::new(&enclave.id, policy.clone());
+    let mut ch_b = SecureChannel::new(&enclave_b.id, policy);
+
+    let init = ch_a.initiate_handshake(&enclave);
+    let resp = ch_b.respond_to_handshake(&enclave_b, &init);
+    ch_a.complete_handshake(&resp, &init.dh_public).unwrap();
+
+    let msg = ch_a.encrypt_message(b"sealed adapter transfer").unwrap();
+    let decrypted = ch_b.decrypt_message(&msg).unwrap();
+    println!(
+        "  Secure channel: {} <-> {} | msg OK ({} bytes)",
+        &enclave.id[..8],
+        &enclave_b.id[..8],
+        decrypted.len()
+    );
+
+    // Step 11: Stats
+    println!("\nStep 11: Final statistics...");
     println!("{}", "-".repeat(60));
     let stats = mgr.stats();
     println!("  Adapters:     {}", stats.total_adapters);
@@ -753,13 +991,13 @@ async fn cmd_demo() {
     println!("  Domains:      {}", stats.total_domains);
     println!("  Parameters:   {}", stats.total_parameters);
 
-    // Step 11: Persistence
-    println!("\nStep 11: Saving state...");
+    // Step 12: Persistence
+    println!("\nStep 12: Saving state...");
     println!("{}", "-".repeat(60));
     save_manager(&mgr);
 
-    // Step 12: P2P sharing
-    println!("\nStep 12: Starting P2P node for ZK sharing...");
+    // Step 13: P2P sharing
+    println!("\nStep 13: Starting P2P node for ZK sharing...");
     println!("{}", "-".repeat(60));
 
     let manager = Arc::new(Mutex::new(mgr));
@@ -810,11 +1048,12 @@ async fn cmd_demo() {
 ║  - Merged attention adapters, applied stacked LoRA           ║
 ║  - Intelligent sharing registry with reputation scoring      ║
 ║  - Versioned backup with SHA256 integrity verification       ║
+║  - TEE enclave: sealed storage + attestation + secure channel║
 ║  - P2P auto-sharing via gossipsub + mDNS                     ║
 ║                                                              ║
 ║  Run 'dlrs serve' to start a persistent P2P node.            ║
 ║  Run 'dlrs auto-train' for AI-assisted fine-tuning.          ║
-║  Run 'dlrs backup list' to view saved snapshots.             ║
+║  Run 'dlrs tee status' for TEE enclave information.          ║
 ╚══════════════════════════════════════════════════════════════╝
 "#
     );
